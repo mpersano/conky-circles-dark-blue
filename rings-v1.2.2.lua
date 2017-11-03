@@ -33,6 +33,11 @@ corner_r=35
 bg_colour=0x3b3b3b
 bg_alpha=0.2
 
+read_sectors_total = 0
+write_sectors_total = 0
+
+read_sectors_delta = 0
+write_sectors_delta = 0
 
 settings_table = {
     {
@@ -148,9 +153,9 @@ settings_table = {
         end_angle=240
     },
     {
-        name='fs_used_perc',
-        arg='/home',
-        max=100,
+        name='read_sectors',
+        arg='',
+        max=2048, -- 1 MB
         bg_colour=0x3b3b3b,
         bg_alpha=0.6,
         fg_colour=0x34cdff,
@@ -162,9 +167,9 @@ settings_table = {
         end_angle=240
     },
     {
-        name='fs_used_perc',
-        arg='/usr',
-        max=100,
+        name='write_sectors',
+        arg='',
+        max=2048, -- 1 MB
         bg_colour=0x3b3b3b,
         bg_alpha=0.4,
         fg_colour=0x34cdff,
@@ -294,15 +299,21 @@ end
 
 function conky_ring_stats()
 	local function setup_rings(cr,pt)
-		local str=''
 		local value=0
-		
-		str=string.format('${%s %s}',pt['name'],pt['arg'])
-		str=conky_parse(str)
-		
-		value=tonumber(str)
+
+		if pt['name'] == 'read_sectors' then
+			value = read_sectors_delta
+		elseif pt['name'] == 'write_sectors' then
+			value = write_sectors_delta
+		else
+			local str=string.format('${%s %s}',pt['name'],pt['arg'])
+			str=conky_parse(str)
+			value=tonumber(str)
+		end
+
 		if value == nil then value = 0 end
 		pct=value/pt['max']
+		if pct > 1 then pct = 1 end
 		
 		draw_ring(cr,pct,pt)
 	end
@@ -390,34 +401,43 @@ function iface_watch()
     settings_table[12]['arg']=iface
 end
 
-function conky_draw_bg()
-    if conky_window==nil then return end
-    local w=conky_window.width
-    local h=conky_window.height
-    local cs=cairo_xlib_surface_create(conky_window.display, conky_window.drawable, conky_window.visual, w, h)
-    cr=cairo_create(cs)
-    
-    cairo_move_to(cr,corner_r,0)
-    cairo_line_to(cr,w-corner_r,0)
-    cairo_curve_to(cr,w,0,w,0,w,corner_r)
-    cairo_line_to(cr,w,h-corner_r)
-    cairo_curve_to(cr,w,h,w,h,w-corner_r,h)
-    cairo_line_to(cr,corner_r,h)
-    cairo_curve_to(cr,0,h,0,h,0,h-corner_r)
-    cairo_line_to(cr,0,corner_r)
-    cairo_curve_to(cr,0,0,0,0,corner_r,0)
-    cairo_close_path(cr)
-    
-    cairo_set_source_rgba(cr,rgb_to_r_g_b(bg_colour,bg_alpha))
-    cairo_fill(cr)
+function update_io_stats()
+    -- unfortunately conky doesn't have diskio_readf/diskio_writef (like downspeedf)
+    -- so we'll have to do it the hard way
+
+    local f = io.open("/sys/block/sda/stat")
+    if not f then return end
+
+    -- would like to read the whole line and do a string.match
+    -- since we only care about sectors, but on my ubuntu
+    -- string.match seems to be blacklisted or some crap
+
+    local read_ios = f:read("*n")
+    local read_merges = f:read("*n")
+    local read_sectors = f:read("*n")
+    local read_ticks = f:read("*n")
+
+    local write_ios = f:read("*n")
+    local write_merges = f:read("*n")
+    local write_sectors = f:read("*n")
+    local write_ticks = f:read("*n")
+
+    f:close()
+
+    if read_sectors_total > 0 then
+        read_sectors_delta = read_sectors - read_sectors_total
+        write_sectors_delta = write_sectors - write_sectors_total
+    end
+
+    read_sectors_total = read_sectors
+    write_sectors_total = write_sectors
 end
 
-
 function conky_main()
+    update_io_stats()
+
     temp_watch()
     disk_watch()
     iface_watch()
     conky_ring_stats()
--- quand fond nécessaire
---    conky_draw_bg()
 end
